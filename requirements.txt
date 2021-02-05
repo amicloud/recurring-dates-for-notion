@@ -1,3 +1,5 @@
-notion 0.0.28
-arrow
-python-dotenv
+arrow~=0.17.0
+python-dotenv~=0.15.0
+
+notion~=0.0.28
+python-dateutil~=2.8.1
