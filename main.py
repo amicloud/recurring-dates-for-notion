@@ -1,8 +1,5 @@
 from notion.client import NotionClient
-from notion.collection import Collection
-from notion.collection import Record
 from notion.collection import NotionDate
-import datetime
 import arrow
 from math import ceil
 from dateutil import tz
