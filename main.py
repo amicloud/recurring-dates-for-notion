@@ -7,16 +7,10 @@ from dotenv import load_dotenv
 import os
 
 
-def main(key=None, database_url=None):
-    load_dotenv()
-    api_token = key if key else os.getenv("NOTION_API_KEY")
-    client = NotionClient(token_v2=api_token)
-
-    dataspace_do_url = database_url if database_url else os.getenv("DATABASE_URL")
-    dataspace_do_page = client.get_block(dataspace_do_url)
-    dataspace_do = client.get_collection_view(dataspace_do_url)
-    rows = dataspace_do.collection.get_rows()
-    print(dataspace_do_page.title)
+def update(key, database_url):
+    client = NotionClient(token_v2=key)
+    database = client.get_collection_view(database_url)
+    rows = database.collection.get_rows()
 
     for row in rows:
         if row.Date and row.Repeats and (
@@ -50,7 +44,7 @@ def main(key=None, database_url=None):
                 elif row.Repeats == "Weekly":
                     t = (arrow.now() - new_time).days / 7
                     v = t if t > 0 else 1
-                    new_time = new_time.shift(weeks=v)
+                    new_time = new_time.shift(weeks=1)
                     if row.Date.end:
                         new_end = new_end.shift(weeks=v)
                 elif row.Repeats == "Biweekly":
@@ -121,4 +115,12 @@ def main(key=None, database_url=None):
                     print("Date " + new_time.date().__str__())
 
 
-main()
+def enter(request=None):
+    # if (not request.args["api_token"] is None) and (not request.args["database_url"] is None):
+    #     update(request.args["api_token"], request.args["database_url"])
+    # else:
+        load_dotenv()
+        update(os.getenv("NOTION_API_KEY"), os.getenv("DATABASE_URL"))
+
+
+enter()
