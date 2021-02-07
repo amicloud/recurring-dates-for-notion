@@ -3,3 +3,4 @@ python-dotenv~=0.15.0
 
 notion~=0.0.28
 python-dateutil~=2.8.1
+requests~=2.25.1
