@@ -77,10 +77,11 @@ errors = []
 updated_records = 0
 
 
-def update(key, database_address, prop_date="Date", prop_repeat="Repeats", prop_repeat_frequency="RepeatFrequency"):
+def update(notion_token, database_address, prop_date="Date", prop_repeat="Repeats",
+           prop_repeat_frequency="RepeatFrequency"):
     global updated_records
     try:
-        client = NotionClient(token_v2=key)
+        client = NotionClient(token_v2=notion_token)
     except HTTPError:
         errors.append(error_messages['invalid_token'])
         return False
@@ -267,7 +268,7 @@ def format_response(message):
 def enter(request):
     good_request = True
     if request.args:
-        if 'api_token' not in request.args:
+        if 'notion_token' not in request.args:
             errors.append(error_messages['req_missing_token'])
             good_request = False
         if 'database' not in request.args:
@@ -284,7 +285,7 @@ def enter(request):
             good_request = False
 
     if good_request:
-        if update(request.args['api_token'], request.args['database'],
+        if update(request.args['notion_token'], request.args['database'],
                   prop_date=request.args['date'], prop_repeat=request.args['repeat'],
                   prop_repeat_frequency=request.args['frequency']):
             report()
