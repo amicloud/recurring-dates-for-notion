@@ -1,8 +1,8 @@
+from math import ceil, floor
+
+import arrow
 from notion.client import NotionClient
 from notion.collection import NotionDate
-import arrow
-from math import ceil, floor
-from dateutil import tz
 from requests import HTTPError
 
 
@@ -64,20 +64,21 @@ error_messages = {
     'repeat_frequency_non_integer': 'Please enter an integral custom repeat frequency in Notion.',
     'invalid_option': 'Invalid option selected in Notion',
     'req_missing_db_address': 'URL missing database address',
-    'req_missing_token': 'URL missing api_token',
+    'req_missing_token': 'URL missing notion_token',
     'col_date_missing': 'Date column name missing from request URL',
     'col_repeat_missing': 'Repeat type column name missing from request URL',
     'col_frequency_missing': 'Custom Repeat Frequency column name missing from request URL',
     'invalid_token': 'User token is invalid. Maybe you were logged out? <a href=""> How to get a token</a>',
     'invalid_database': 'Database is invalid.',
     'property_not_found': 'property not found: ',
+    'timezone_missing': 'URL missing timezone',
 }
 
 errors = []
 updated_records = 0
 
 
-def update(notion_token, database_address, prop_date="Date", prop_repeat="Repeats",
+def update(notion_token, database_address, timezone, prop_date="Date", prop_repeat="Repeats",
            prop_repeat_frequency="RepeatFrequency"):
     global updated_records
     try:
@@ -128,44 +129,40 @@ def update(notion_token, database_address, prop_date="Date", prop_repeat="Repeat
     for row in query_results:
         row_date = row.get_property(prop_date)
         row_repeats = row.get_property(prop_repeat)
+        m_tz = row_date.timezone if row_date.timezone else timezone
         if row_date and row_repeats and (
-                arrow.get(row_date.start) < (
-                arrow.now(row_date.timezone) if row_date.timezone else arrow.now())) and (
+                arrow.get(row_date.start, m_tz) < (
+                arrow.now(m_tz))) and (
                 row_repeats != "Does Not Repeat") \
-                and ((arrow.get(row_date.end) < (
-                arrow.now(row_date.timezone) if row_date.timezone else arrow.now())) if row_date.end else True):
+                and ((arrow.get(row_date.end, m_tz) < (
+                arrow.now(m_tz))) if row_date.end else True):
+            #
+            # # Rather redundant with new query filter but may as well still check
+            # if arrow.get(row_date.start) < arrow.get("1900-01-01 00:00:00", m_tz):
+            #     row.set_property(prop_date, arrow.get("1900-01-01 00:00:00").datetime)
+            #     errors.append(error_messages['old_date'])
+            #     break
 
-            # Rather redundant with new query filter but may as well still check
-            if arrow.get(row_date.start) < arrow.get("1900-01-01 00:00:00"):
-                row.set_property("Date", arrow.get("1900-01-01 00:00:00").datetime)
-                errors.append(error_messages['old_date'])
-                break
-
-            new_end = None
-            if row_date.timezone:
-                new_time = arrow.get(row_date.start, tz.gettz(row_date.timezone))
-                if row_date.end:
-                    new_end = arrow.get(row_date.end, tz.gettz(row_date.timezone))
+            new_time = arrow.get(row_date.start, m_tz)
+            if row_date.end:
+                new_end = arrow.get(row_date.end, m_tz)
             else:
-                new_time = arrow.get(row_date.start)
-                if row_date.end:
-                    new_end = arrow.get(row_date.end)
+                new_end = None
 
             success = True
-
-            while new_time < (arrow.now(row_date.timezone) if row_date.timezone else arrow.now()):
+            while new_time < (arrow.now(m_tz)):
                 if row_repeats == "Daily":
-                    v = ceil((arrow.now() - new_time).days) + 1
+                    v = ceil((arrow.now(m_tz) - new_time).days) + 1
                     new_time = new_time.shift(days=v)
                     if row_date.end:
                         new_end = new_end.shift(days=v)
                 elif row_repeats == "Weekly":
-                    v = ceil((arrow.now() - new_time).days / 7)
+                    v = ceil((arrow.now(m_tz) - new_time).days / 7)
                     new_time = new_time.shift(weeks=v)
                     if row_date.end:
                         new_end = new_end.shift(weeks=v)
                 elif row_repeats == "Biweekly":
-                    v = ceil((arrow.now() - new_time).days / 14)
+                    v = ceil((arrow.now(m_tz) - new_time).days / 14)
                     new_time = new_time.shift(weeks=v)
                     if row_date.end:
                         new_end = new_end.shift(weeks=v)
@@ -201,7 +198,7 @@ def update(notion_token, database_address, prop_date="Date", prop_repeat="Repeat
                             errors.append(error_messages['repeat_frequency_non_integer'])
                             break
                         if row_repeat_frequency > 0:
-                            t = (arrow.now() - new_time).days / row_repeat_frequency
+                            t = (arrow.now(m_tz) - new_time).days / row_repeat_frequency
                             new_time = new_time.shift(
                                 days=floor(t) * row_repeat_frequency if t >= 1 else row_repeat_frequency)
                         else:
@@ -226,8 +223,7 @@ def update(notion_token, database_address, prop_date="Date", prop_repeat="Repeat
                     else:
                         notion_date = NotionDate(start=new_time.datetime, timezone=row_date.timezone,
                                                  reminder=row_date.reminder)
-                    row.set_property("Date", notion_date)
-                    print("Datetime " + new_time.datetime.__str__())
+                    row.set_property(prop_date, notion_date)
                 else:
                     if row_date.end:
                         notion_date = NotionDate(start=new_time.date(),
@@ -235,7 +231,7 @@ def update(notion_token, database_address, prop_date="Date", prop_repeat="Repeat
                     else:
                         notion_date = NotionDate(start=new_time.date(), reminder=row_date.reminder)
 
-                    row.set_property("Date", notion_date)
+                    row.set_property(prop_date, notion_date)
     return True
 
 
@@ -283,9 +279,12 @@ def enter(request):
         if 'frequency' not in request.args:
             errors.append(error_messages['col_frequency_missing'])
             good_request = False
+        if 'timezone' not in request.args:
+            errors.append(error_messages['timezone_missing'])
+            good_request = False
 
     if good_request:
-        if update(request.args['notion_token'], request.args['database'],
+        if update(request.args['notion_token'], request.args['database'], request.args['timezone'],
                   prop_date=request.args['date'], prop_repeat=request.args['repeat'],
                   prop_repeat_frequency=request.args['frequency']):
             report()
