@@ -1,6 +1,6 @@
-from math import ceil, floor
-
 import arrow
+import copy
+from math import ceil, floor
 from notion.client import NotionClient
 from notion.collection import NotionDate
 from requests import HTTPError
@@ -11,7 +11,7 @@ def get_filters(date, repeat):
         'filter': {
             'value': {
                 'type': 'relative',
-                'value': 'today'
+                'value': 'tomorrow'
             },
             'operator': 'date_is_before'
         },
@@ -72,6 +72,7 @@ error_messages = {
     'invalid_database': 'Database is invalid.',
     'property_not_found': 'property not found: ',
     'timezone_missing': 'URL missing timezone',
+    'stuck_in_loop': 'Got stuck in a really long loop and broke out.',
 }
 
 errors = []
@@ -126,6 +127,8 @@ def update(notion_token, database_address, timezone, prop_date="Date", prop_repe
 
     if query_results is None:
         return False
+
+
     for row in query_results:
         row_date = row.get_property(prop_date)
         row_repeats = row.get_property(prop_repeat)
@@ -142,24 +145,28 @@ def update(notion_token, database_address, timezone, prop_date="Date", prop_repe
                 new_end = arrow.get(row_date.end, m_tz)
             else:
                 new_end = None
-
             success = True
-            while new_time < (arrow.now(m_tz)):
+            loops = 0
+            while new_time < (arrow.now(m_tz) if row_date.timezone else arrow.now(m_tz).date()):
+                loops += 1
+                if loops > 5000:
+                    errors.append(error_messages['stuck_in_loop'])
+                    break
                 if row_repeats == "Daily":
                     v = ceil((arrow.now(m_tz) - new_time).days) + 1
-                    new_time = new_time.shift(days=v)
+                    new_time = new_time.shift(days=v if v > 0 else 1)
                     if row_date.end:
-                        new_end = new_end.shift(days=v)
+                        new_end = new_end.shift(days=v if v > 0 else 1)
                 elif row_repeats == "Weekly":
                     v = ceil((arrow.now(m_tz) - new_time).days / 7)
-                    new_time = new_time.shift(weeks=v)
+                    new_time = new_time.shift(weeks=v if v > 0 else 1)
                     if row_date.end:
-                        new_end = new_end.shift(weeks=v)
+                        new_end = new_end.shift(weeks=v if v > 0 else 1)
                 elif row_repeats == "Biweekly":
                     v = ceil((arrow.now(m_tz) - new_time).days / 14)
-                    new_time = new_time.shift(weeks=v)
+                    new_time = new_time.shift(weeks=v if v > 0 else 2)
                     if row_date.end:
-                        new_end = new_end.shift(weeks=v)
+                        new_end = new_end.shift(weeks=v if v > 0 else 2)
                 elif row_repeats == "Monthly":
                     new_time = new_time.shift(months=1)
                     if row_date.end:
@@ -207,23 +214,24 @@ def update(notion_token, database_address, timezone, prop_date="Date", prop_repe
                     success = False
                     errors.append(error_messages['invalid_option'] + " '" + row_repeats + "'")
                     break
-
+                print(new_time.__str__())
             if success:
                 updated_records += 1
                 if ":" in row_date.start.__str__():
                     if row_date.end:
-                        notion_date = NotionDate(start=new_time.datetime, timezone=row_date.timezone,
+                        notion_date = NotionDate(start=new_time.datetime, timezone=m_tz,
                                                  end=new_end.datetime, reminder=row_date.reminder)
                     else:
-                        notion_date = NotionDate(start=new_time.datetime, timezone=row_date.timezone,
+                        notion_date = NotionDate(start=new_time.datetime, timezone=m_tz,
                                                  reminder=row_date.reminder)
                     row.set_property(prop_date, notion_date)
                 else:
                     if row_date.end:
-                        notion_date = NotionDate(start=new_time.date(),
+                        notion_date = NotionDate(start=new_time.date(), timezone=m_tz,
                                                  end=new_end.date(), reminder=row_date.reminder)
                     else:
-                        notion_date = NotionDate(start=new_time.date(), reminder=row_date.reminder)
+                        notion_date = NotionDate(start=new_time.date(), reminder=row_date.reminder,
+                                                 timezone=m_tz, )
 
                     row.set_property(prop_date, notion_date)
     return True
@@ -232,11 +240,10 @@ def update(notion_token, database_address, timezone, prop_date="Date", prop_repe
 def response_styling():
     return "<style>" \
            ".error { color: red;  display: block; font-size: 1.25em;} " \
-           ".message { color: black;  display: block; font-size: 1.5em;}" \
+           ".message { color: black;  display: block; font-size: 1.35em;}" \
            ".info { color:black; font-size: 1em; display: block; }" \
            ".res {" \
            "display: block;" \
-           "margin: 0 auto;" \
            "}</style>"
 
 
@@ -283,9 +290,9 @@ def enter(request):
                   prop_repeat_frequency=request.args['frequency']):
             report()
             if len(errors) > 0:
-                return format_response("Success, but some errors occurred...")
+                return format_response("Partial success.")
             else:
-                return format_response("Success!")
+                return format_response("Success.")
         else:
             return format_response("Fatal error.")
     else:
